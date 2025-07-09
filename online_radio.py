@@ -21,7 +21,7 @@ ID_MUTE_TOGGLE = wx.ID_HIGHEST + 4; ID_CLEAR_LOG = wx.ID_HIGHEST + 5
 
 # --- Config và Default Channels (Giữ nguyên) ---
 CONFIG_FILE = "radio_config.ini"
-DEFAULT_CHANNELS = { "LC channel": "http://ktgame207.com:8000/lc", "KT Game channel": "http://ktgame207.com:8000/live" }
+DEFAULT_CHANNELS = { "LC channel": "http://ktgame207.com:8000/lc", "KT Game channel": "http://ktgame207.com:8000/live", "nnh channel": "http://ktgame207.com:8000/nnh","đông trường channel":"http://ktgame207.com:8000/dongtruong"}
 
 # --- Class Logger (Giữ nguyên) ---
 class GuiLogger:
@@ -84,7 +84,7 @@ class RadioFrame(wx.Frame):
         self._create_menubar()
         self._bind_events() # Bind sự kiện không liên quan media player trước
         self.Centre(); self.Show()
-        self.log_message("Radio Online TE v1.7 (LCBoy Coder) sẵn sàng!")
+        self.log_message("Radio Online TE v1.8 (LCBoy Coder) sẵn sàng!")
 
     def _create_media_player_if_needed(self): # Giữ nguyên
         if self.media_player is None:
@@ -139,7 +139,7 @@ class RadioFrame(wx.Frame):
         self.log_message("Closing..."); self.stop_playback(force_destroy=True); self.Destroy()
     def on_about(self, event):
         # ***** SỬA TÊN CODER TRONG ABOUT *****
-        wx.MessageBox("Online Radio TE v1.7\n\nNhà phát triển: Technology Entertainment\nCoder: LCBoy",
+        wx.MessageBox("Online Radio TE v1.8\n\nNhà phát triển: Technology Entertainment\nCoder: LCBoy",
                       "Giới thiệu", wx.OK | wx.ICON_INFORMATION)
     # ------------------------------------
 
