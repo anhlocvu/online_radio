@@ -4,15 +4,16 @@
 # Developer: Technology Entertainment
 # Coder: LCBoy - Lập trình viên mù 
 # <<< ĐÃ SỬA TÊN
-# Phiên bản: 1.7 - Cập nhật tên Coder, sửa lỗi trước đó
+# Phiên bản: 1.8 - Cập nhật tên Coder, sửa lỗi trước đó
 
+import sys
 import wx
 import wx.media
 import threading
 import os
 import configparser
 from datetime import datetime
-import subprocess
+from datetime import datetime
 
 # --- ID (Giữ nguyên) ---
 ID_EXIT = wx.ID_EXIT; ID_ABOUT = wx.ID_ABOUT; ID_ADD_CHANNEL = wx.ID_HIGHEST + 1
@@ -21,7 +22,7 @@ ID_MUTE_TOGGLE = wx.ID_HIGHEST + 4; ID_CLEAR_LOG = wx.ID_HIGHEST + 5
 
 # --- Config và Default Channels (Giữ nguyên) ---
 CONFIG_FILE = "radio_config.ini"
-DEFAULT_CHANNELS = { "LC channel": "http://ktgame207.com:8000/lc", "KT Game channel": "http://ktgame207.com:8000/live", "nnh channel": "http://ktgame207.com:8000/nnh","đông trường channel":"http://ktgame207.com:8000/dongtruong"}
+DEFAULT_CHANNELS = { "LC channel": "http://lc.ktgame207.com:8000/lc", "KT Game channel": "http://lc.ktgame207.com:8000/ktgame"}
 
 # --- Class Logger (Giữ nguyên) ---
 class GuiLogger:
@@ -224,19 +225,20 @@ class RadioFrame(wx.Frame):
                 self.log_message(f"Layout updated after player area {'show' if show else 'hide'}.")
         else: self.log_message("Error: player_area_sizer not found.", error=True)
 
-    def start_playback_thread(self, url, name): # Giữ nguyên
+    def start_playback_thread(self, url, name):
         if not self.media_player: self.log_message("Player not ready.",True); self.playback_failed(name, "Player is None."); return
         self.SetStatusText(f"Đang tải '{name}'...")
-        thread = threading.Thread(target=self._load_media, args=(url, name), name=f"Load-{name}"); thread.daemon=True; thread.start()
+        # LCBoy: Chạy trực tiếp trên Main Thread để tránh lỗi GUI
+        self._load_media(url, name)
 
-    def _load_media(self, url, name): # Giữ nguyên
-        if not self.media_player: self.log_message("Thread: Player gone before Load()?", True); return # Kiểm tra lại player
-        self.log_message(f"Thread: Loading URL: {url}")
+    def _load_media(self, url, name):
+        if not self.media_player: self.log_message("Player gone before Load()?", True); return
+        self.log_message(f"Loading URL: {url}")
         try:
             loaded = self.media_player.Load(url)
-            if not loaded: self.log_message(f"Thread: Load() failed.",True); wx.CallAfter(self.playback_failed, name, "Load() returned false.")
-            else: self.log_message(f"Thread: Load() OK, waiting...")
-        except Exception as e: self.log_message(f"Thread: Load() exception: {e}",True); wx.CallAfter(self.playback_failed, name, f"Lỗi: {e}")
+            if not loaded: self.log_message(f"Load() failed.",True); self.playback_failed(name, "Load() returned false.")
+            else: self.log_message(f"Load() OK, waiting...")
+        except Exception as e: self.log_message(f"Load() exception: {e}",True); self.playback_failed(name, f"Lỗi: {e}")
 
     def on_media_loaded(self, event): # Giữ nguyên
         if not self.media_player: return
@@ -319,7 +321,10 @@ class RadioFrame(wx.Frame):
 
 # --- Chạy ứng dụng ---
 if __name__ == '__main__':
-    print("-" * 40); print("Khởi chạy Radio Online TE v1.7..."); print("-" * 40)
+    if sys.stdout and sys.platform == 'win32':
+        try: sys.stdout.reconfigure(encoding='utf-8')
+        except: pass
+    print("-" * 40); print("Khởi chạy Radio Online TE v1.8..."); print("-" * 40)
     app = wx.App(False)
     frame = RadioFrame(None, "Online Radio Technology Entertainment")
     if frame and frame.IsShown(): app.MainLoop()
