@@ -68,7 +68,7 @@ class RadioFrame(wx.Frame):
         channel_box.GetStaticBox().SetForegroundColour(wx.CYAN)
         
         self.channel_listbox = wx.ListBox(self.panel, style=wx.LB_SINGLE)
-        self.channel_listbox.SetName("Danh sách các đài phát thanh")
+        self.channel_listbox.SetName("Danh sách các đài phát thanh. Sử dụng mũi tên để chọn, Enter để phát.")
         self.channel_listbox.SetBackgroundColour(wx.Colour(40, 40, 40))
         self.channel_listbox.SetForegroundColour(wx.WHITE)
         self.channel_listbox.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
@@ -77,7 +77,7 @@ class RadioFrame(wx.Frame):
 
         channel_buttons_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.add_button = wx.Button(self.panel, ID_ADD_CHANNEL, "&Thêm kênh")
-        self.add_button.SetName("Thêm kênh mới vào danh sách")
+        self.add_button.SetName("Thêm kênh mới")
         
         self.remove_button = wx.Button(self.panel, ID_REMOVE_CHANNEL, "&Xóa kênh")
         self.remove_button.SetName("Xóa kênh đang chọn")
@@ -94,7 +94,7 @@ class RadioFrame(wx.Frame):
         playback_box.GetStaticBox().SetForegroundColour(wx.CYAN)
         
         self.now_playing_text = wx.StaticText(self.panel, label="Trạng thái: Sẵn sàng.")
-        self.now_playing_text.SetName("Trạng thái phát")
+        self.now_playing_text.SetName("Thông tin trạng thái hiện tại")
         self.now_playing_text.SetForegroundColour(wx.Colour(0, 255, 127))
         self.now_playing_text.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         
@@ -103,14 +103,14 @@ class RadioFrame(wx.Frame):
         controls_sizer = wx.BoxSizer(wx.HORIZONTAL)
         
         self.stop_button = wx.Button(self.panel, ID_STOP_PLAYBACK, "&Dừng phát")
-        self.stop_button.SetName("Dừng phát radio")
+        self.stop_button.SetName("Dừng phát nhạc")
         
         self.mute_button = wx.ToggleButton(self.panel, ID_MUTE_TOGGLE, "&Tắt tiếng")
         self.mute_button.SetName("Bật hoặc tắt âm thanh")
         
         volume_label = wx.StaticText(self.panel, label="Âm lượng:")
         self.volume_slider = wx.Slider(self.panel, value=80, minValue=0, maxValue=100, style=wx.SL_HORIZONTAL | wx.SL_LABELS)
-        self.volume_slider.SetName("Điều chỉnh âm lượng")
+        self.volume_slider.SetName("Âm lượng") # Đặt nhãn trực tiếp cho slider
         self.volume_slider.SetMinSize((200, -1))
         
         controls_sizer.Add(self.stop_button, 0, wx.RIGHT, 15)
@@ -131,7 +131,7 @@ class RadioFrame(wx.Frame):
         log_box.GetStaticBox().SetForegroundColour(wx.Colour(200, 200, 200))
         
         self.log_ctrl = wx.TextCtrl(self.panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
-        self.log_ctrl.SetName("Nội dung nhật ký")
+        self.log_ctrl.SetName("Nội dung nhật ký hoạt động")
         self.log_ctrl.SetBackgroundColour(wx.Colour(10, 10, 10))
         self.log_ctrl.SetForegroundColour(wx.Colour(220, 220, 220))
         self.log_ctrl.SetMinSize((-1, 100))
@@ -139,7 +139,7 @@ class RadioFrame(wx.Frame):
         log_box.Add(self.log_ctrl, 1, wx.EXPAND | wx.ALL, 5)
         
         self.clear_log_button = wx.Button(self.panel, ID_CLEAR_LOG, "&Xóa nhật ký")
-        self.clear_log_button.SetName("Xóa tất cả nội dung trong nhật ký")
+        self.clear_log_button.SetName("Xóa trắng nhật ký")
         log_box.Add(self.clear_log_button, 0, wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, 5)
         
         main_sizer.Add(log_box, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 15)
@@ -149,6 +149,15 @@ class RadioFrame(wx.Frame):
         self.SetStatusText("Sẵn sàng.")
         
         self.panel.SetSizer(main_sizer)
+
+        # --- Thiết lập thứ tự Tab logic cho người mù ---
+        self.channel_listbox.MoveBeforeInTabOrder(self.stop_button)
+        self.stop_button.MoveBeforeInTabOrder(self.mute_button)
+        self.mute_button.MoveBeforeInTabOrder(self.volume_slider)
+        self.volume_slider.MoveBeforeInTabOrder(self.log_ctrl)
+        self.log_ctrl.MoveBeforeInTabOrder(self.add_button)
+        self.add_button.MoveBeforeInTabOrder(self.remove_button)
+        self.remove_button.MoveBeforeInTabOrder(self.clear_log_button)
 
         # ----- Khởi tạo Dữ liệu -----
         self.gui_logger = GuiLogger(self.log_ctrl)
@@ -171,8 +180,17 @@ class RadioFrame(wx.Frame):
         self.mute_button.Disable()
         self.volume_slider.Disable()
 
+        # --- Thiết lập bảng phím tắt (Accelerator Table) ---
+        accel_tbl = wx.AcceleratorTable([
+            (wx.ACCEL_ALT, ord('D'), ID_STOP_PLAYBACK),
+            (wx.ACCEL_ALT, ord('T'), ID_MUTE_TOGGLE),
+            (wx.ACCEL_CTRL, ord('L'), ID_CLEAR_LOG)
+        ])
+        self.SetAcceleratorTable(accel_tbl)
+
         self.Centre()
         self.Show()
+        self.channel_listbox.SetFocus() # Đưa con trỏ vào danh sách kênh ngay khi mở
         self.log_message("Phần mềm Radio Online TE v1.9 sẵn sàng!")
 
     def _create_media_player_if_needed(self):
@@ -315,6 +333,10 @@ class RadioFrame(wx.Frame):
         self.now_playing_text.SetForegroundColour(wx.Colour(0, 255, 127))
         self.SetStatusText(f"Đang phát: {self.current_channel_name}")
         self.stop_button.Enable(); self.mute_button.Enable(); self.volume_slider.Enable(); self.apply_volume()
+        
+        # Tự động nhảy tới nút Dừng khi phát thành công
+        self.stop_button.SetFocus()
+        wx.LogStatus(f"Bắt đầu phát {self.current_channel_name}")
 
     def on_media_stopped_or_finished(self, event):
         if self.user_stopped:
@@ -362,6 +384,10 @@ class RadioFrame(wx.Frame):
         self.SetStatusText("Sẵn sàng.")
         self.current_channel_name = ""; self.current_playing_url = None
         self.stop_button.Disable(); self.mute_button.Disable(); self.volume_slider.Disable()
+        
+        # Đưa con trỏ quay lại danh sách kênh và thông báo đã dừng
+        self.channel_listbox.SetFocus()
+        wx.LogStatus("Đã dừng phát")
 
     def on_mute_toggle(self, event):
         if not self.media_player: return
@@ -370,7 +396,13 @@ class RadioFrame(wx.Frame):
         else:
             self.volume_slider.Enable(); self.volume_slider.SetValue(self.previous_volume); self.apply_volume()
 
-    def on_volume_change(self, event): self.apply_volume()
+    def on_volume_change(self, event):
+        self.apply_volume()
+        # Thông báo mức âm lượng hiện tại cho trình đọc màn hình
+        vol = self.volume_slider.GetValue()
+        self.SetStatusText(f"Âm lượng {vol}%")
+        wx.LogStatus(f"Âm lượng {vol} phần trăm")
+
     def apply_volume(self):
         if self.media_player:
             vol = self.volume_slider.GetValue(); self.media_player.SetVolume(vol / 100.0)
