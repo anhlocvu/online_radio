@@ -3,32 +3,27 @@
 # Online Radio Technology Entertainment
 # Developer: Technology Entertainment
 # Coder: LCBoy - Lập trình viên mù 
-# <<< ĐÃ SỬA TÊN
-# Phiên bản: 1.9 - Cập nhật giao diện, hỗ trợ tiếp cận và xử lý lỗi luồng
+# Phiên bản: 2.0 - Tải cấu hình từ Cloud và Tối ưu Tiếp cận
 
 import sys
 import wx
 import wx.media
 import threading
 import os
-import configparser
+import json
+import urllib.request
 from datetime import datetime
 
-# --- ID (Giữ nguyên và mở rộng) ---
+# --- Cấu hình Cloud ---
+CONFIG_URL = "https://lc.ktgame207.com/radio/config.json"
+TEMP_CONFIG = "temp_config.json"
+
+# --- ID ---
 ID_EXIT = wx.ID_EXIT
 ID_ABOUT = wx.ID_ABOUT
-ID_ADD_CHANNEL = wx.ID_HIGHEST + 1
-ID_REMOVE_CHANNEL = wx.ID_HIGHEST + 2
 ID_STOP_PLAYBACK = wx.ID_HIGHEST + 3
 ID_MUTE_TOGGLE = wx.ID_HIGHEST + 4
 ID_CLEAR_LOG = wx.ID_HIGHEST + 5
-
-# --- Config và Default Channels ---
-CONFIG_FILE = "radio_config.ini"
-DEFAULT_CHANNELS = {
-    "LC channel": "http://lc.ktgame207.com:8000/lc",
-    "KT Game channel": "http://lc.ktgame207.com:8000/ktgame"
-}
 
 # --- Class Logger ---
 class GuiLogger:
@@ -46,17 +41,13 @@ class GuiLogger:
                     self.log_ctrl.SetDefaultStyle(wx.TextAttr(color))
                     self.log_ctrl.AppendText(log_line)
                     self.log_ctrl.SetDefaultStyle(wx.TextAttr(wx.WHITE))
-                except:
-                    print(f"LOG (wxError): {log_line.strip()}")
-            else:
-                print(f"LOG (No GUI): {log_line.strip()}")
+                except: pass
         wx.CallAfter(append_text)
 
 class RadioFrame(wx.Frame):
     def __init__(self, parent, title):
         super(RadioFrame, self).__init__(parent, title=title, size=(700, 800))
 
-        # --- Thiết lập giao diện tổng thể ---
         self.panel = wx.Panel(self)
         self.panel.SetBackgroundColour(wx.Colour(20, 20, 20)) 
         self.panel.SetForegroundColour(wx.WHITE)
@@ -74,19 +65,6 @@ class RadioFrame(wx.Frame):
         self.channel_listbox.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         
         channel_box.Add(self.channel_listbox, 1, wx.EXPAND | wx.ALL, 10)
-
-        channel_buttons_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.add_button = wx.Button(self.panel, ID_ADD_CHANNEL, "&Thêm kênh")
-        self.add_button.SetName("Thêm kênh mới")
-        
-        self.remove_button = wx.Button(self.panel, ID_REMOVE_CHANNEL, "&Xóa kênh")
-        self.remove_button.SetName("Xóa kênh đang chọn")
-        self.remove_button.Disable()
-        
-        channel_buttons_sizer.Add(self.add_button, 0, wx.RIGHT, 15)
-        channel_buttons_sizer.Add(self.remove_button, 0)
-        channel_box.Add(channel_buttons_sizer, 0, wx.ALIGN_CENTER | wx.BOTTOM, 10)
-        
         main_sizer.Add(channel_box, 1, wx.EXPAND | wx.ALL, 15)
 
         # --- Khu vực Điều khiển và Phát ---
@@ -110,7 +88,7 @@ class RadioFrame(wx.Frame):
         
         volume_label = wx.StaticText(self.panel, label="Âm lượng:")
         self.volume_slider = wx.Slider(self.panel, value=80, minValue=0, maxValue=100, style=wx.SL_HORIZONTAL | wx.SL_LABELS)
-        self.volume_slider.SetName("Âm lượng") # Đặt nhãn trực tiếp cho slider
+        self.volume_slider.SetName("Âm lượng")
         self.volume_slider.SetMinSize((200, -1))
         
         controls_sizer.Add(self.stop_button, 0, wx.RIGHT, 15)
@@ -119,11 +97,6 @@ class RadioFrame(wx.Frame):
         controls_sizer.Add(self.volume_slider, 1, wx.ALIGN_CENTER_VERTICAL)
         
         playback_box.Add(controls_sizer, 0, wx.EXPAND | wx.ALL, 10)
-        
-        self.player_placeholder = wx.Panel(self.panel, size=(-1, 10))
-        self.player_placeholder.Hide()
-        playback_box.Add(self.player_placeholder, 0, wx.EXPAND)
-        
         main_sizer.Add(playback_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 15)
 
         # --- Khu vực Log Box ---
@@ -144,25 +117,21 @@ class RadioFrame(wx.Frame):
         
         main_sizer.Add(log_box, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 15)
 
-        # --- Status Bar ---
         self.statusBar = self.CreateStatusBar(1)
         self.SetStatusText("Sẵn sàng.")
         
         self.panel.SetSizer(main_sizer)
 
-        # --- Thiết lập thứ tự Tab logic cho người mù ---
+        # --- Thứ tự Tab ---
         self.channel_listbox.MoveBeforeInTabOrder(self.stop_button)
         self.stop_button.MoveBeforeInTabOrder(self.mute_button)
         self.mute_button.MoveBeforeInTabOrder(self.volume_slider)
         self.volume_slider.MoveBeforeInTabOrder(self.log_ctrl)
-        self.log_ctrl.MoveBeforeInTabOrder(self.add_button)
-        self.add_button.MoveBeforeInTabOrder(self.remove_button)
-        self.remove_button.MoveBeforeInTabOrder(self.clear_log_button)
+        self.log_ctrl.MoveBeforeInTabOrder(self.clear_log_button)
 
         # ----- Khởi tạo Dữ liệu -----
         self.gui_logger = GuiLogger(self.log_ctrl)
         self.channels = {}
-        self.current_playing_url = None
         self.current_channel_name = ""
         self.previous_volume = 80
         self.media_player = None
@@ -180,7 +149,6 @@ class RadioFrame(wx.Frame):
         self.mute_button.Disable()
         self.volume_slider.Disable()
 
-        # --- Thiết lập bảng phím tắt (Accelerator Table) ---
         accel_tbl = wx.AcceleratorTable([
             (wx.ACCEL_ALT, ord('D'), ID_STOP_PLAYBACK),
             (wx.ACCEL_ALT, ord('T'), ID_MUTE_TOGGLE),
@@ -190,17 +158,14 @@ class RadioFrame(wx.Frame):
 
         self.Centre()
         self.Show()
-        self.channel_listbox.SetFocus() # Đưa con trỏ vào danh sách kênh ngay khi mở
-        self.log_message("Phần mềm Radio Online TE v1.9 sẵn sàng!")
+        self.channel_listbox.SetFocus()
+        self.log_message("Phần mềm Radio Online TE v2.0 sẵn sàng!")
 
     def _create_media_player_if_needed(self):
         if self.media_player is None:
             try:
-                try:
-                    self.media_player = wx.media.MediaCtrl(self.panel, szBackend=wx.media.MEDIABACKEND_WMP10)
-                except:
-                    self.media_player = wx.media.MediaCtrl(self.panel)
-                
+                try: self.media_player = wx.media.MediaCtrl(self.panel, szBackend=wx.media.MEDIABACKEND_WMP10)
+                except: self.media_player = wx.media.MediaCtrl(self.panel)
                 self.media_player.Hide()
                 self.Bind(wx.media.EVT_MEDIA_LOADED, self.on_media_loaded, self.media_player)
                 self.Bind(wx.media.EVT_MEDIA_STOP, self.on_media_stopped_or_finished, self.media_player)
@@ -212,11 +177,7 @@ class RadioFrame(wx.Frame):
         return True
 
     def log_message(self, message, error=False, debug=False):
-        if hasattr(self, 'gui_logger'):
-            self.gui_logger.log_message(message, error, debug)
-
-    def on_clear_log(self, event):
-        if self.log_ctrl: self.log_ctrl.Clear()
+        if hasattr(self, 'gui_logger'): self.gui_logger.log_message(message, error, debug)
 
     def _create_menubar(self):
         menu_bar = wx.MenuBar()
@@ -230,77 +191,48 @@ class RadioFrame(wx.Frame):
 
     def _bind_events(self):
         self.Bind(wx.EVT_CLOSE, self.on_exit)
-        self.channel_listbox.Bind(wx.EVT_LISTBOX, self.update_remove_button_state)
         self.channel_listbox.Bind(wx.EVT_LISTBOX_DCLICK, self.on_channel_select)
-        self.Bind(wx.EVT_BUTTON, self.on_add_channel, id=ID_ADD_CHANNEL)
-        self.Bind(wx.EVT_BUTTON, self.on_remove_channel, id=ID_REMOVE_CHANNEL)
         self.Bind(wx.EVT_BUTTON, self.on_stop_playback, id=ID_STOP_PLAYBACK)
         self.Bind(wx.EVT_TOGGLEBUTTON, self.on_mute_toggle, id=ID_MUTE_TOGGLE)
         self.volume_slider.Bind(wx.EVT_SLIDER, self.on_volume_change)
-        self.Bind(wx.EVT_BUTTON, self.on_clear_log, id=ID_CLEAR_LOG)
+        self.Bind(wx.EVT_BUTTON, id=ID_CLEAR_LOG, handler=lambda e: self.log_ctrl.Clear())
         self.channel_listbox.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
         self.channel_listbox.Bind(wx.EVT_CHAR, self.on_key_down)
 
     def on_key_down(self, event):
-        key_code = event.GetKeyCode()
-        if key_code in [wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER, wx.WXK_SPACE]:
+        if event.GetKeyCode() in [wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER, wx.WXK_SPACE]:
             self.on_channel_select(None)
-        else:
-            event.Skip()
+        else: event.Skip()
 
     def on_exit(self, event):
         self.user_stopped = True
         if self.media_player: self.media_player.Stop()
+        if os.path.exists(TEMP_CONFIG):
+            try: os.remove(TEMP_CONFIG)
+            except: pass
         self.Destroy()
 
     def on_about(self, event):
-        wx.MessageBox("Online Radio TE v1.9\n\nCoder: LCBoy (Vũ Anh Lộc)", "Giới thiệu", wx.OK | wx.ICON_INFORMATION)
+        wx.MessageBox("Online Radio TE v2.0\n\nCoder: LCBoy (Vũ Anh Lộc)\nTải cấu hình từ máy chủ đám mây.", "Giới thiệu", wx.OK | wx.ICON_INFORMATION)
 
     def load_config(self):
-        config = configparser.ConfigParser()
-        if os.path.exists(CONFIG_FILE):
-            try:
-                config.read(CONFIG_FILE, encoding='utf-8')
-                if 'Channels' in config: self.channels = dict(config['Channels'])
-            except: self.channels = DEFAULT_CHANNELS.copy()
-        else: self.create_default_config()
-
-    def save_config(self):
-        config = configparser.ConfigParser(); config['Channels'] = self.channels
+        self.log_message("Đang tải danh sách kênh từ máy chủ...")
         try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as cf: config.write(cf)
-        except: pass
-
-    def create_default_config(self):
-        self.channels = DEFAULT_CHANNELS.copy(); self.save_config()
+            with urllib.request.urlopen(CONFIG_URL, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                self.channels = data.get("Channels", {})
+                # Lưu tạm để dùng
+                with open(TEMP_CONFIG, 'w', encoding='utf-8') as f:
+                    json.dump(data, f)
+                self.log_message(f"Đã tải thành công {len(self.channels)} kênh.")
+        except Exception as e:
+            self.log_message("Không tải được thông tin luồng radio từ máy chủ.", error=True)
+            wx.MessageBox("Không tải được thông tin luồng radio từ máy chủ.\nVui lòng kiểm tra kết nối mạng!", "Lỗi kết nối", wx.OK | wx.ICON_ERROR)
+            self.channels = {}
 
     def populate_channel_list(self):
         self.channel_listbox.Clear()
         for name in self.channels.keys(): self.channel_listbox.Append(name)
-        self.update_remove_button_state(None)
-
-    def on_add_channel(self, event):
-        name_dlg = wx.TextEntryDialog(self, "Nhập tên kênh:", "Thêm kênh", "")
-        if name_dlg.ShowModal() == wx.ID_OK:
-            name = name_dlg.GetValue().strip()
-            if not name: return
-            url_dlg = wx.TextEntryDialog(self, f"URL stream cho '{name}':", "Thêm kênh", "http://")
-            if url_dlg.ShowModal() == wx.ID_OK:
-                url = url_dlg.GetValue().strip()
-                if url.startswith("http"):
-                    self.channels[name] = url; self.populate_channel_list(); self.save_config()
-
-    def on_remove_channel(self, event):
-        sel = self.channel_listbox.GetSelection()
-        if sel == wx.NOT_FOUND: return
-        name = self.channel_listbox.GetString(sel)
-        if wx.MessageBox(f"Xóa kênh '{name}'?", "Xác nhận", wx.YES_NO) == wx.YES:
-            if self.current_channel_name == name: self.on_stop_playback(None)
-            del self.channels[name]; self.populate_channel_list(); self.save_config()
-
-    def update_remove_button_state(self, event):
-        self.remove_button.Enable(self.channel_listbox.GetSelection() != wx.NOT_FOUND)
-        if event: event.Skip()
 
     def on_channel_select(self, event):
         sel = self.channel_listbox.GetSelection()
@@ -315,59 +247,46 @@ class RadioFrame(wx.Frame):
         if self.media_player: self.media_player.Stop()
         
         self.user_stopped = False
-        self.current_channel_name = name; self.current_playing_url = url
+        self.current_channel_name = name
         self.play_start_time = datetime.now()
         
-        if self._create_media_player_if_needed():
-            self.media_player.Load(url)
-        else:
-            self.playback_failed(name, "Lỗi trình phát.")
+        if self._create_media_player_if_needed(): self.media_player.Load(url)
+        else: self.playback_failed(name, "Lỗi trình phát.")
 
     def on_media_loaded(self, event):
         if not self.media_player: return
         self.user_stopped = False
         self.play_start_time = datetime.now()
         self.media_player.Play()
-        
         self.now_playing_text.SetLabelText(f"Đang phát: {self.current_channel_name}")
         self.now_playing_text.SetForegroundColour(wx.Colour(0, 255, 127))
         self.SetStatusText(f"Đang phát: {self.current_channel_name}")
         self.stop_button.Enable(); self.mute_button.Enable(); self.volume_slider.Enable(); self.apply_volume()
-        
-        # Tự động nhảy tới nút Dừng khi phát thành công
         self.stop_button.SetFocus()
         wx.LogStatus(f"Bắt đầu phát {self.current_channel_name}")
 
     def on_media_stopped_or_finished(self, event):
-        if self.user_stopped:
-            event.Skip(); return
-        
-        # Grace period 15 giây để luồng thật sự ổn định
+        if self.user_stopped: event.Skip(); return
         if (datetime.now() - self.play_start_time).total_seconds() < 15:
             event.Skip(); return
-
         if self.media_player and self.current_channel_name:
             channel = self.current_channel_name
             self.log_message(f"Luồng '{channel}' bị ngắt, đang thử kết nối lại...")
-            self.media_player.Play() # Thử phát lại ngay
+            self.media_player.Play()
             wx.CallLater(5000, self.check_real_error, channel, 1)
         event.Skip()
 
     def check_real_error(self, channel_name, attempt):
         if not self.media_player or self.user_stopped or self.current_channel_name != channel_name: return
         if self.media_player.GetState() == wx.media.MEDIASTATE_PLAYING: return
-        
         if attempt < 3:
             self.media_player.Play()
             wx.CallLater(5000, self.check_real_error, channel_name, attempt + 1)
-        else:
-            self.playback_failed(channel_name, "Mất kết nối máy chủ.")
+        else: self.playback_failed(channel_name, "Mất kết nối máy chủ.")
 
     def playback_failed(self, name, reason):
         if self.user_stopped: return
-        # Kiểm tra sống còn: nếu đang có tiếng thì im lặng hủy lỗi
         if self.media_player and self.media_player.GetState() == wx.media.MEDIASTATE_PLAYING: return
-        
         self.log_message(f"Sự cố: {reason}", error=True)
         wx.MessageBox(f"Đã có sự cố khi chuẩn bị luồng hoặc mất kết nối.\nKênh: {name}", "Lỗi", wx.OK | wx.ICON_ERROR)
         self.stop_playback_ui()
@@ -379,26 +298,22 @@ class RadioFrame(wx.Frame):
 
     def stop_playback_ui(self):
         self.user_stopped = True
+        self.channel_listbox.SetFocus()
         self.now_playing_text.SetLabelText("Trạng thái: Sẵn sàng.")
         self.now_playing_text.SetForegroundColour(wx.Colour(0, 255, 127))
         self.SetStatusText("Sẵn sàng.")
-        self.current_channel_name = ""; self.current_playing_url = None
+        self.current_channel_name = ""
         self.stop_button.Disable(); self.mute_button.Disable(); self.volume_slider.Disable()
-        
-        # Đưa con trỏ quay lại danh sách kênh và thông báo đã dừng
-        self.channel_listbox.SetFocus()
         wx.LogStatus("Đã dừng phát")
 
     def on_mute_toggle(self, event):
         if not self.media_player: return
         if self.mute_button.GetValue():
             self.previous_volume = self.volume_slider.GetValue(); self.media_player.SetVolume(0.0); self.volume_slider.Disable()
-        else:
-            self.volume_slider.Enable(); self.volume_slider.SetValue(self.previous_volume); self.apply_volume()
+        else: self.volume_slider.Enable(); self.volume_slider.SetValue(self.previous_volume); self.apply_volume()
 
     def on_volume_change(self, event):
         self.apply_volume()
-        # Thông báo mức âm lượng hiện tại cho trình đọc màn hình
         vol = self.volume_slider.GetValue()
         self.SetStatusText(f"Âm lượng {vol}%")
         wx.LogStatus(f"Âm lượng {vol} phần trăm")
