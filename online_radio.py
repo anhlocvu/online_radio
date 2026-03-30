@@ -3,7 +3,7 @@
 # Online Radio Technology Entertainment
 # Developer: Technology Entertainment
 # Coder: LCBoy - Lập trình viên mù 
-# Phiên bản: 2.0 - Tải cấu hình từ Cloud và Tối ưu Tiếp cận
+# Phiên bản: 2.1 - Tải cấu hình Cloud qua Requests và Tối ưu NVDA
 
 import sys
 import wx
@@ -11,12 +11,11 @@ import wx.media
 import threading
 import os
 import json
-import urllib.request
+import requests
 from datetime import datetime
 
 # --- Cấu hình Cloud ---
 CONFIG_URL = "https://lc.ktgame207.com/radio/config.json"
-TEMP_CONFIG = "temp_config.json"
 
 # --- ID ---
 ID_EXIT = wx.ID_EXIT
@@ -87,8 +86,9 @@ class RadioFrame(wx.Frame):
         self.mute_button.SetName("Bật hoặc tắt âm thanh")
         
         volume_label = wx.StaticText(self.panel, label="Âm lượng:")
-        self.volume_slider = wx.Slider(self.panel, value=80, minValue=0, maxValue=100, style=wx.SL_HORIZONTAL | wx.SL_LABELS)
-        self.volume_slider.SetName("Âm lượng")
+        # Đã bỏ wx.SL_LABELS để NVDA đọc chuẩn, và đặt giá trị mặc định là 50
+        self.volume_slider = wx.Slider(self.panel, value=50, minValue=0, maxValue=100, style=wx.SL_HORIZONTAL)
+        self.volume_slider.SetName("Âm lượng") 
         self.volume_slider.SetMinSize((200, -1))
         
         controls_sizer.Add(self.stop_button, 0, wx.RIGHT, 15)
@@ -132,8 +132,9 @@ class RadioFrame(wx.Frame):
         # ----- Khởi tạo Dữ liệu -----
         self.gui_logger = GuiLogger(self.log_ctrl)
         self.channels = {}
+        self.current_playing_url = None
         self.current_channel_name = ""
-        self.previous_volume = 80
+        self.previous_volume = 50
         self.media_player = None
         self.user_stopped = False 
         self.play_start_time = datetime.now()
@@ -159,7 +160,7 @@ class RadioFrame(wx.Frame):
         self.Centre()
         self.Show()
         self.channel_listbox.SetFocus()
-        self.log_message("Phần mềm Radio Online TE v2.0 sẵn sàng!")
+        self.log_message("Phần mềm Radio Online TE v2.1 sẵn sàng!")
 
     def _create_media_player_if_needed(self):
         if self.media_player is None:
@@ -207,32 +208,32 @@ class RadioFrame(wx.Frame):
     def on_exit(self, event):
         self.user_stopped = True
         if self.media_player: self.media_player.Stop()
-        if os.path.exists(TEMP_CONFIG):
-            try: os.remove(TEMP_CONFIG)
-            except: pass
         self.Destroy()
 
     def on_about(self, event):
-        wx.MessageBox("Online Radio TE v2.0\n\nCoder: LCBoy (Vũ Anh Lộc)\nTải cấu hình từ máy chủ đám mây.", "Giới thiệu", wx.OK | wx.ICON_INFORMATION)
+        wx.MessageBox("Online Radio TE v2.1\n\nCoder: LCBoy (Vũ Anh Lộc)\nTải cấu hình trực tiếp từ Cloud (Requests).", "Giới thiệu", wx.OK | wx.ICON_INFORMATION)
 
     def load_config(self):
         self.log_message("Đang tải danh sách kênh từ máy chủ...")
-        try:
-            with urllib.request.urlopen(CONFIG_URL, timeout=10) as response:
-                data = json.loads(response.read().decode('utf-8'))
+        def _fetch():
+            try:
+                # Sử dụng requests để tải trực tiếp vào RAM, không lưu file
+                response = requests.get(CONFIG_URL, timeout=10)
+                response.raise_for_status()
+                data = response.json()
                 self.channels = data.get("Channels", {})
-                # Lưu tạm để dùng
-                with open(TEMP_CONFIG, 'w', encoding='utf-8') as f:
-                    json.dump(data, f)
-                self.log_message(f"Đã tải thành công {len(self.channels)} kênh.")
-        except Exception as e:
-            self.log_message("Không tải được thông tin luồng radio từ máy chủ.", error=True)
-            wx.MessageBox("Không tải được thông tin luồng radio từ máy chủ.\nVui lòng kiểm tra kết nối mạng!", "Lỗi kết nối", wx.OK | wx.ICON_ERROR)
-            self.channels = {}
+                wx.CallAfter(self.populate_channel_list)
+                wx.CallAfter(self.log_message, f"Đã tải thành công {len(self.channels)} kênh.")
+            except Exception as e:
+                wx.CallAfter(self.log_message, "Lỗi tải cấu hình từ máy chủ.", error=True)
+                wx.CallAfter(wx.MessageBox, "Không tải được danh sách kênh từ máy chủ.\nVui lòng kiểm tra mạng!", "Lỗi", wx.OK | wx.ICON_ERROR)
+        
+        threading.Thread(target=_fetch, daemon=True).start()
 
     def populate_channel_list(self):
         self.channel_listbox.Clear()
-        for name in self.channels.keys(): self.channel_listbox.Append(name)
+        for name in sorted(self.channels.keys()):
+            self.channel_listbox.Append(name)
 
     def on_channel_select(self, event):
         sel = self.channel_listbox.GetSelection()
@@ -310,7 +311,8 @@ class RadioFrame(wx.Frame):
         if not self.media_player: return
         if self.mute_button.GetValue():
             self.previous_volume = self.volume_slider.GetValue(); self.media_player.SetVolume(0.0); self.volume_slider.Disable()
-        else: self.volume_slider.Enable(); self.volume_slider.SetValue(self.previous_volume); self.apply_volume()
+        else:
+            self.volume_slider.Enable(); self.volume_slider.SetValue(self.previous_volume); self.apply_volume()
 
     def on_volume_change(self, event):
         self.apply_volume()
