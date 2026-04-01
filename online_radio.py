@@ -23,6 +23,7 @@ ID_ABOUT = wx.ID_ABOUT
 ID_STOP_PLAYBACK = wx.ID_HIGHEST + 3
 ID_MUTE_TOGGLE = wx.ID_HIGHEST + 4
 ID_CLEAR_LOG = wx.ID_HIGHEST + 5
+ID_RECORD_STREAM = wx.ID_HIGHEST + 6
 
 # --- Class Logger ---
 class GuiLogger:
@@ -43,9 +44,96 @@ class GuiLogger:
                 except: pass
         wx.CallAfter(append_text)
 
+# --- Dialog Ghi âm ---
+class RecordConfigDialog(wx.Dialog):
+    def __init__(self, parent, channel_name):
+        super().__init__(parent, title="Cấu hình Ghi âm", size=(450, 300))
+        
+        panel = wx.Panel(self)
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        
+        # Đường dẫn
+        path_box = wx.StaticBoxSizer(wx.VERTICAL, panel, "Đường dẫn lưu file")
+        self.path_input = wx.TextCtrl(panel, value=os.getcwd())
+        self.path_input.SetName("Đường dẫn thư mục lưu trữ")
+        browse_btn = wx.Button(panel, label="&Duyệt...")
+        browse_btn.Bind(wx.EVT_BUTTON, self.on_browse)
+        
+        path_h_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        path_h_sizer.Add(self.path_input, 1, wx.EXPAND | wx.RIGHT, 5)
+        path_h_sizer.Add(browse_btn, 0)
+        path_box.Add(path_h_sizer, 0, wx.EXPAND | wx.ALL, 5)
+        
+        # Tên file
+        name_box = wx.StaticBoxSizer(wx.VERTICAL, panel, "Tên file (Định dạng MP3)")
+        self.filename_input = wx.TextCtrl(panel)
+        self.filename_input.SetHint("stream_" + datetime.now().strftime("%Y%m%d"))
+        self.filename_input.SetName("Ô nhập tên file ghi âm")
+        name_box.Add(self.filename_input, 0, wx.EXPAND | wx.ALL, 5)
+        
+        # Nút bấm
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.start_btn = wx.Button(panel, wx.ID_OK, "&Bắt đầu ghi")
+        self.start_btn.SetDefault()
+        self.cancel_btn = wx.Button(panel, wx.ID_CANCEL, "&Hủy (Esc)")
+        
+        btn_sizer.Add(self.start_btn, 1, wx.RIGHT, 10)
+        btn_sizer.Add(self.cancel_btn, 1)
+        
+        main_sizer.Add(path_box, 0, wx.EXPAND | wx.ALL, 10)
+        main_sizer.Add(name_box, 0, wx.EXPAND | wx.ALL, 10)
+        main_sizer.AddStretchSpacer()
+        main_sizer.Add(btn_sizer, 0, wx.ALIGN_CENTER | wx.BOTTOM, 15)
+        
+        panel.SetSizer(main_sizer)
+        self.filename_input.SetFocus()
+        self.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
+
+    def on_browse(self, event):
+        dlg = wx.DirDialog(self, "Chọn thư mục lưu file ghi âm", self.path_input.GetValue())
+        if dlg.ShowModal() == wx.ID_OK:
+            self.path_input.SetValue(dlg.GetPath())
+        dlg.Destroy()
+
+    def on_key_down(self, event):
+        if event.GetKeyCode() == wx.WXK_ESCAPE:
+            self.EndModal(wx.ID_CANCEL)
+        else:
+            event.Skip()
+
+# --- Class Ghi âm ngầm ---
+class StreamRecorder(threading.Thread):
+    def __init__(self, url, file_path, log_func, callback_finished):
+        super().__init__(daemon=True)
+        self.url = url
+        self.file_path = file_path
+        self.log_func = log_func
+        self.callback_finished = callback_finished
+        self.stop_flag = threading.Event()
+
+    def run(self):
+        try:
+            self.log_func(f"Đang kết nối luồng để ghi âm...")
+            with requests.get(self.url, stream=True, timeout=15) as r:
+                r.raise_for_status()
+                with open(self.file_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if self.stop_flag.is_set():
+                            break
+                        if chunk:
+                            f.write(chunk)
+            self.log_func(f"Hoàn tất ghi âm: {os.path.basename(self.file_path)}")
+        except Exception as e:
+            self.log_func(f"Lỗi khi ghi âm: {e}", error=True)
+        finally:
+            wx.CallAfter(self.callback_finished, self.file_path)
+
+    def stop(self):
+        self.stop_flag.set()
+
 class RadioFrame(wx.Frame):
     def __init__(self, parent, title):
-        super(RadioFrame, self).__init__(parent, title=title, size=(700, 800))
+        super(RadioFrame, self).__init__(parent, title=title, size=(700, 850))
 
         self.panel = wx.Panel(self)
         self.panel.SetBackgroundColour(wx.Colour(20, 20, 20)) 
@@ -56,37 +144,29 @@ class RadioFrame(wx.Frame):
         # --- Khu vực Danh sách Kênh ---
         channel_box = wx.StaticBoxSizer(wx.VERTICAL, self.panel, "Danh sách Kênh")
         channel_box.GetStaticBox().SetForegroundColour(wx.CYAN)
-        
         self.channel_listbox = wx.ListBox(self.panel, style=wx.LB_SINGLE)
         self.channel_listbox.SetName("Danh sách các đài phát thanh. Sử dụng mũi tên để chọn, Enter để phát.")
         self.channel_listbox.SetBackgroundColour(wx.Colour(40, 40, 40))
         self.channel_listbox.SetForegroundColour(wx.WHITE)
         self.channel_listbox.SetFont(wx.Font(11, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        
         channel_box.Add(self.channel_listbox, 1, wx.EXPAND | wx.ALL, 10)
         main_sizer.Add(channel_box, 1, wx.EXPAND | wx.ALL, 15)
 
-        # --- Khu vực Điều khiển và Phát ---
+        # --- Khu vực Trình phát ---
         playback_box = wx.StaticBoxSizer(wx.VERTICAL, self.panel, "Trình phát")
         playback_box.GetStaticBox().SetForegroundColour(wx.CYAN)
-        
         self.now_playing_text = wx.StaticText(self.panel, label="Trạng thái: Sẵn sàng.")
         self.now_playing_text.SetName("Thông tin trạng thái hiện tại")
         self.now_playing_text.SetForegroundColour(wx.Colour(0, 255, 127))
         self.now_playing_text.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        
         playback_box.Add(self.now_playing_text, 0, wx.ALIGN_CENTER | wx.TOP | wx.BOTTOM, 10)
 
         controls_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        
         self.stop_button = wx.Button(self.panel, ID_STOP_PLAYBACK, "&Dừng phát")
         self.stop_button.SetName("Dừng phát nhạc")
-        
         self.mute_button = wx.ToggleButton(self.panel, ID_MUTE_TOGGLE, "&Tắt tiếng")
         self.mute_button.SetName("Bật hoặc tắt âm thanh")
-        
         volume_label = wx.StaticText(self.panel, label="Âm lượng:")
-        # Đã bỏ wx.SL_LABELS để NVDA đọc chuẩn, và đặt giá trị mặc định là 50
         self.volume_slider = wx.Slider(self.panel, value=50, minValue=0, maxValue=100, style=wx.SL_HORIZONTAL)
         self.volume_slider.SetName("Âm lượng") 
         self.volume_slider.SetMinSize((200, -1))
@@ -95,54 +175,40 @@ class RadioFrame(wx.Frame):
         controls_sizer.Add(self.mute_button, 0, wx.RIGHT, 15)
         controls_sizer.Add(volume_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
         controls_sizer.Add(self.volume_slider, 1, wx.ALIGN_CENTER_VERTICAL)
-        
         playback_box.Add(controls_sizer, 0, wx.EXPAND | wx.ALL, 10)
         main_sizer.Add(playback_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 15)
 
-        # --- Khu vực Log Box ---
+        # --- Nhật ký ---
         log_box = wx.StaticBoxSizer(wx.VERTICAL, self.panel, "Nhật ký hoạt động")
-        log_box.GetStaticBox().SetForegroundColour(wx.Colour(200, 200, 200))
-        
         self.log_ctrl = wx.TextCtrl(self.panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
         self.log_ctrl.SetName("Nội dung nhật ký hoạt động")
         self.log_ctrl.SetBackgroundColour(wx.Colour(10, 10, 10))
         self.log_ctrl.SetForegroundColour(wx.Colour(220, 220, 220))
         self.log_ctrl.SetMinSize((-1, 100))
-        
         log_box.Add(self.log_ctrl, 1, wx.EXPAND | wx.ALL, 5)
-        
         self.clear_log_button = wx.Button(self.panel, ID_CLEAR_LOG, "&Xóa nhật ký")
-        self.clear_log_button.SetName("Xóa trắng nhật ký")
         log_box.Add(self.clear_log_button, 0, wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, 5)
-        
         main_sizer.Add(log_box, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 15)
 
         self.statusBar = self.CreateStatusBar(1)
-        self.SetStatusText("Sẵn sàng.")
-        
         self.panel.SetSizer(main_sizer)
-
-        # --- Thứ tự Tab ---
-        self.channel_listbox.MoveBeforeInTabOrder(self.stop_button)
-        self.stop_button.MoveBeforeInTabOrder(self.mute_button)
-        self.mute_button.MoveBeforeInTabOrder(self.volume_slider)
-        self.volume_slider.MoveBeforeInTabOrder(self.log_ctrl)
-        self.log_ctrl.MoveBeforeInTabOrder(self.clear_log_button)
 
         # ----- Khởi tạo Dữ liệu -----
         self.gui_logger = GuiLogger(self.log_ctrl)
         self.channels = {}
-        self.current_playing_url = None
         self.current_channel_name = ""
+        self.current_playing_url = None
         self.previous_volume = 50
         self.media_player = None
         self.user_stopped = False 
         self.play_start_time = datetime.now()
+        
+        # Trạng thái ghi âm
+        self.recorder = None
+        self.is_recording = False
 
         self.load_config()
         self.populate_channel_list()
-
-        # ----- Tạo Menu & Bind Events -----
         self._create_menubar()
         self._bind_events()
         
@@ -182,13 +248,25 @@ class RadioFrame(wx.Frame):
 
     def _create_menubar(self):
         menu_bar = wx.MenuBar()
-        file_menu = wx.Menu(); help_menu = wx.Menu()
-        exit_item = file_menu.Append(ID_EXIT, "Thoát (&X)\tAlt+X")
-        about_item = help_menu.Append(ID_ABOUT, "Giới thiệu (&G)\tF1")
-        menu_bar.Append(file_menu, "&Tệp"); menu_bar.Append(help_menu, "&Trợ giúp")
+        file_menu = wx.Menu()
+        tool_menu = wx.Menu()
+        help_menu = wx.Menu()
+        
+        file_menu.Append(ID_EXIT, "Thoát (&X)\tAlt+X")
+        
+        self.record_menu_item = tool_menu.AppendCheckItem(ID_RECORD_STREAM, "&Ghi âm luồng phát...\tCtrl+R")
+        self.record_menu_item.Enable(False) # Chỉ bật khi đang phát
+        
+        help_menu.Append(ID_ABOUT, "Giới thiệu (&G)\tF1")
+        
+        menu_bar.Append(file_menu, "&Tệp")
+        menu_bar.Append(tool_menu, "&Công cụ")
+        menu_bar.Append(help_menu, "&Trợ giúp")
+        
         self.SetMenuBar(menu_bar)
-        self.Bind(wx.EVT_MENU, self.on_exit, exit_item)
-        self.Bind(wx.EVT_MENU, self.on_about, about_item)
+        self.Bind(wx.EVT_MENU, self.on_exit, id=ID_EXIT)
+        self.Bind(wx.EVT_MENU, self.on_about, id=ID_ABOUT)
+        self.Bind(wx.EVT_MENU, self.on_record_stream_click, id=ID_RECORD_STREAM)
 
     def _bind_events(self):
         self.Bind(wx.EVT_CLOSE, self.on_exit)
@@ -207,50 +285,44 @@ class RadioFrame(wx.Frame):
 
     def on_exit(self, event):
         self.user_stopped = True
+        if self.is_recording: self.stop_recording()
         if self.media_player: self.media_player.Stop()
         self.Destroy()
 
     def on_about(self, event):
-        wx.MessageBox("Online Radio TE v2.1\n\nCoder: LCBoy (Vũ Anh Lộc)\nTải cấu hình trực tiếp từ Cloud (Requests).", "Giới thiệu", wx.OK | wx.ICON_INFORMATION)
+        wx.MessageBox("Online Radio TE v2.2\n\nCoder: LCBoy (Vũ Anh Lộc)\nTính năng: Ghi âm luồng phát kỹ thuật số.", "Giới thiệu", wx.OK | wx.ICON_INFORMATION)
 
     def load_config(self):
-        self.log_message("Đang tải danh sách kênh từ máy chủ...")
+        self.log_message("Đang tải danh sách kênh...")
         def _fetch():
             try:
-                # Sử dụng requests để tải trực tiếp vào RAM, không lưu file
                 response = requests.get(CONFIG_URL, timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 self.channels = data.get("Channels", {})
                 wx.CallAfter(self.populate_channel_list)
-                wx.CallAfter(self.log_message, f"Đã tải thành công {len(self.channels)} kênh.")
+                wx.CallAfter(self.log_message, f"Đã cập nhật {len(self.channels)} kênh.")
             except Exception as e:
-                wx.CallAfter(self.log_message, "Lỗi tải cấu hình từ máy chủ.", error=True)
-                wx.CallAfter(wx.MessageBox, "Không tải được danh sách kênh từ máy chủ.\nVui lòng kiểm tra mạng!", "Lỗi", wx.OK | wx.ICON_ERROR)
-        
+                wx.CallAfter(self.log_message, "Lỗi tải cấu hình.", error=True)
+                wx.CallAfter(wx.MessageBox, "Không tải được danh sách kênh từ máy chủ!", "Lỗi", wx.OK | wx.ICON_ERROR)
         threading.Thread(target=_fetch, daemon=True).start()
 
     def populate_channel_list(self):
         self.channel_listbox.Clear()
-        for name in sorted(self.channels.keys()):
-            self.channel_listbox.Append(name)
+        for name in sorted(self.channels.keys()): self.channel_listbox.Append(name)
 
     def on_channel_select(self, event):
         sel = self.channel_listbox.GetSelection()
         if sel == wx.NOT_FOUND: return
         name = self.channel_listbox.GetString(sel); url = self.channels[name]
-        
         self.log_message(f"Kết nối tới: {name}...")
         self.now_playing_text.SetLabelText(f"Đang kết nối: {name}...")
         self.now_playing_text.SetForegroundColour(wx.Colour(255, 255, 0))
-        
         self.user_stopped = True
         if self.media_player: self.media_player.Stop()
-        
         self.user_stopped = False
-        self.current_channel_name = name
+        self.current_channel_name = name; self.current_playing_url = url
         self.play_start_time = datetime.now()
-        
         if self._create_media_player_if_needed(): self.media_player.Load(url)
         else: self.playback_failed(name, "Lỗi trình phát.")
 
@@ -263,8 +335,48 @@ class RadioFrame(wx.Frame):
         self.now_playing_text.SetForegroundColour(wx.Colour(0, 255, 127))
         self.SetStatusText(f"Đang phát: {self.current_channel_name}")
         self.stop_button.Enable(); self.mute_button.Enable(); self.volume_slider.Enable(); self.apply_volume()
+        self.record_menu_item.Enable(True)
         self.stop_button.SetFocus()
         wx.LogStatus(f"Bắt đầu phát {self.current_channel_name}")
+
+    def on_record_stream_click(self, event):
+        if self.is_recording:
+            self.stop_recording()
+        else:
+            self.start_recording_dialog()
+
+    def start_recording_dialog(self):
+        dlg = RecordConfigDialog(self, self.current_channel_name)
+        if dlg.ShowModal() == wx.ID_OK:
+            path = dlg.path_input.GetValue()
+            filename = dlg.filename_input.GetValue().strip()
+            if not filename:
+                filename = f"stream_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
+            else:
+                if not filename.endswith(".mp3"): filename += ".mp3"
+            
+            full_path = os.path.join(path, filename)
+            self.recorder = StreamRecorder(self.current_playing_url, full_path, self.log_message, self.on_recording_finished)
+            self.recorder.start()
+            self.is_recording = True
+            self.record_menu_item.Check(True)
+            self.log_message(f"Bắt đầu ghi âm luồng...")
+            wx.LogStatus("Đang ghi âm luồng phát")
+        else:
+            self.record_menu_item.Check(False)
+        dlg.Destroy()
+
+    def stop_recording(self):
+        if self.recorder:
+            self.recorder.stop()
+            self.is_recording = False
+            self.record_menu_item.Check(False)
+            self.log_message("Đã gửi yêu cầu dừng ghi âm.")
+
+    def on_recording_finished(self, path):
+        self.is_recording = False
+        self.record_menu_item.Check(False)
+        wx.MessageBox(f"Ghi âm hoàn tất!\nFile được lưu tại: {path}", "Thông báo", wx.OK | wx.ICON_INFORMATION)
 
     def on_media_stopped_or_finished(self, event):
         if self.user_stopped: event.Skip(); return
@@ -299,12 +411,14 @@ class RadioFrame(wx.Frame):
 
     def stop_playback_ui(self):
         self.user_stopped = True
+        if self.is_recording: self.stop_recording()
         self.channel_listbox.SetFocus()
         self.now_playing_text.SetLabelText("Trạng thái: Sẵn sàng.")
         self.now_playing_text.SetForegroundColour(wx.Colour(0, 255, 127))
         self.SetStatusText("Sẵn sàng.")
         self.current_channel_name = ""
         self.stop_button.Disable(); self.mute_button.Disable(); self.volume_slider.Disable()
+        self.record_menu_item.Enable(False)
         wx.LogStatus("Đã dừng phát")
 
     def on_mute_toggle(self, event):
