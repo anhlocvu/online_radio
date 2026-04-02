@@ -3,7 +3,7 @@
 # Online Radio Technology Entertainment
 # Developer: Technology Entertainment
 # Coder: LCBoy - Lập trình viên mù 
-# Phiên bản: 2.1 - Tải cấu hình Cloud qua Requests và Tối ưu NVDA
+# Phiên bản: 2.3
 
 import sys
 import wx
@@ -13,6 +13,10 @@ import os
 import json
 import requests
 from datetime import datetime
+
+# --- Thông tin phiên bản ---
+APP_NAME = "Online Radio Technology Entertainment"
+VERSION = "2.3"
 
 # --- Cấu hình Cloud ---
 CONFIG_URL = "https://lc.ktgame207.com/radio/config.json"
@@ -133,7 +137,7 @@ class StreamRecorder(threading.Thread):
 
 class RadioFrame(wx.Frame):
     def __init__(self, parent, title):
-        super(RadioFrame, self).__init__(parent, title=title, size=(700, 850))
+        super(RadioFrame, self).__init__(parent, title=f"{APP_NAME} v{VERSION}", size=(700, 850))
 
         self.panel = wx.Panel(self)
         self.panel.SetBackgroundColour(wx.Colour(20, 20, 20)) 
@@ -165,10 +169,13 @@ class RadioFrame(wx.Frame):
         self.stop_button = wx.Button(self.panel, ID_STOP_PLAYBACK, "&Dừng phát")
         self.stop_button.SetName("Dừng phát nhạc")
         self.mute_button = wx.ToggleButton(self.panel, ID_MUTE_TOGGLE, "&Tắt tiếng")
-        self.mute_button.SetName("Bật hoặc tắt âm thanh")
+        self.mute_button.SetName("Đang có tiếng, nhấn để tắt") # Khởi tạo nhãn động
+        
         volume_label = wx.StaticText(self.panel, label="Âm lượng:")
         self.volume_slider = wx.Slider(self.panel, value=50, minValue=0, maxValue=100, style=wx.SL_HORIZONTAL)
-        self.volume_slider.SetName("Âm lượng") 
+        self.volume_slider.SetName("Âm lượng")
+        self.volume_slider.SetLineSize(5) # Bước nhảy 5%
+        self.volume_slider.SetPageSize(10)
         self.volume_slider.SetMinSize((200, -1))
         
         controls_sizer.Add(self.stop_button, 0, wx.RIGHT, 15)
@@ -181,7 +188,8 @@ class RadioFrame(wx.Frame):
         # --- Nhật ký ---
         log_box = wx.StaticBoxSizer(wx.VERTICAL, self.panel, "Nhật ký hoạt động")
         self.log_ctrl = wx.TextCtrl(self.panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
-        self.log_ctrl.SetName("Nội dung nhật ký hoạt động")
+        # Nâng cấp trợ năng: Hướng dẫn đọc nhật ký
+        self.log_ctrl.SetName("Nhật ký hoạt động. Nhấn mũi tên lên xuống để đọc từng dòng tin nhắn.")
         self.log_ctrl.SetBackgroundColour(wx.Colour(10, 10, 10))
         self.log_ctrl.SetForegroundColour(wx.Colour(220, 220, 220))
         self.log_ctrl.SetMinSize((-1, 100))
@@ -203,7 +211,6 @@ class RadioFrame(wx.Frame):
         self.user_stopped = False 
         self.play_start_time = datetime.now()
         
-        # Trạng thái ghi âm
         self.recorder = None
         self.is_recording = False
 
@@ -216,6 +223,13 @@ class RadioFrame(wx.Frame):
         self.mute_button.Disable()
         self.volume_slider.Disable()
 
+        # Thứ tự Tab
+        self.channel_listbox.MoveBeforeInTabOrder(self.stop_button)
+        self.stop_button.MoveBeforeInTabOrder(self.mute_button)
+        self.mute_button.MoveBeforeInTabOrder(self.volume_slider)
+        self.volume_slider.MoveBeforeInTabOrder(self.log_ctrl)
+        self.log_ctrl.MoveBeforeInTabOrder(self.clear_log_button)
+
         accel_tbl = wx.AcceleratorTable([
             (wx.ACCEL_ALT, ord('D'), ID_STOP_PLAYBACK),
             (wx.ACCEL_ALT, ord('T'), ID_MUTE_TOGGLE),
@@ -226,7 +240,7 @@ class RadioFrame(wx.Frame):
         self.Centre()
         self.Show()
         self.channel_listbox.SetFocus()
-        self.log_message("Phần mềm Radio Online TE v2.1 sẵn sàng!")
+        self.log_message(f"Phần mềm {APP_NAME} v{VERSION} sẵn sàng!")
 
     def _create_media_player_if_needed(self):
         if self.media_player is None:
@@ -251,18 +265,13 @@ class RadioFrame(wx.Frame):
         file_menu = wx.Menu()
         tool_menu = wx.Menu()
         help_menu = wx.Menu()
-        
         file_menu.Append(ID_EXIT, "Thoát (&X)\tAlt+X")
-        
         self.record_menu_item = tool_menu.AppendCheckItem(ID_RECORD_STREAM, "&Ghi âm luồng phát...\tCtrl+R")
-        self.record_menu_item.Enable(False) # Chỉ bật khi đang phát
-        
+        self.record_menu_item.Enable(False)
         help_menu.Append(ID_ABOUT, "Giới thiệu (&G)\tF1")
-        
         menu_bar.Append(file_menu, "&Tệp")
         menu_bar.Append(tool_menu, "&Công cụ")
         menu_bar.Append(help_menu, "&Trợ giúp")
-        
         self.SetMenuBar(menu_bar)
         self.Bind(wx.EVT_MENU, self.on_exit, id=ID_EXIT)
         self.Bind(wx.EVT_MENU, self.on_about, id=ID_ABOUT)
@@ -290,7 +299,11 @@ class RadioFrame(wx.Frame):
         self.Destroy()
 
     def on_about(self, event):
-        wx.MessageBox("Online Radio TE v2.2\n\nCoder: LCBoy (Vũ Anh Lộc)\nTính năng: Ghi âm luồng phát kỹ thuật số.", "Giới thiệu", wx.OK | wx.ICON_INFORMATION)
+        wx.MessageBox(
+            "Đây là một ứng dụng cho phép bạn truy cập và nghe các kênh radio đến từ technology entertainment",
+            f"Chào mừng đến với {APP_NAME}, Version: {VERSION}",
+            wx.OK | wx.ICON_INFORMATION
+        )
 
     def load_config(self):
         self.log_message("Đang tải danh sách kênh...")
@@ -423,10 +436,17 @@ class RadioFrame(wx.Frame):
 
     def on_mute_toggle(self, event):
         if not self.media_player: return
-        if self.mute_button.GetValue():
+        is_muted = self.mute_button.GetValue()
+        if is_muted:
             self.previous_volume = self.volume_slider.GetValue(); self.media_player.SetVolume(0.0); self.volume_slider.Disable()
+            self.mute_button.SetName("Đã tắt tiếng, nhấn để bật lại")
+            self.log_message("Đã tắt tiếng.")
         else:
             self.volume_slider.Enable(); self.volume_slider.SetValue(self.previous_volume); self.apply_volume()
+            self.mute_button.SetName("Đang có tiếng, nhấn để tắt")
+            self.log_message("Đã bật lại tiếng.")
+        # Cập nhật để NVDA đọc nhãn mới ngay lập tức
+        self.mute_button.SetFocus()
 
     def on_volume_change(self, event):
         self.apply_volume()
@@ -441,5 +461,5 @@ class RadioFrame(wx.Frame):
 
 if __name__ == '__main__':
     app = wx.App(False)
-    RadioFrame(None, "Online Radio Technology Entertainment")
+    RadioFrame(None, "")
     app.MainLoop()
